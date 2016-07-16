@@ -9,6 +9,8 @@
 #   - the PCI ID
 #   - the interface name
 #   - the NUMA node
+#   - the interface speed
+#   - the interface driver
 #
 # Note: If NUMA support is not enabled, it will output either 
 #   '-1' (The system does not support NUMA)
@@ -101,8 +103,8 @@ get_intf_name_and_type_from_pci_id ()
 # find the PCI devices for the network cards
 ETH_PCI_DEVS=$(lspci -Dvmmn | grep -B 1 "Class:.*0200$" | grep -v "Class:" | awk '{print $2}')
 
-printf "\n%-13s | %-15s | %-4s | %-11s | %-16s\n" "pci_device_id" "if_name" "numa" "carrier" "driver"
-echo '------------------------------------------------------------------------'
+printf "\n%-13s | %-15s | %-4s | %-11s | %-5s | %-16s\n" "pci_device_id" "if_name" "numa" "carrier" "speed" "driver"
+echo '-----------------------------------------------------------------------'
 
 for dev in $ETH_PCI_DEVS; do
     TYPE_AND_NAME_RAW=$(get_intf_name_and_type_from_pci_id $dev)
@@ -121,12 +123,31 @@ for dev in $ETH_PCI_DEVS; do
     
         # the numa_node file might not exist (e.g. for virtio interfaces)
         if [ -f $NUMA_FILE ]; then
-            NUMA=$(cat $NUMA_FILE)
+            NUMA=$(cat $NUMA_FILE 2> /dev/null)
         else
             NUMA="-"
         fi
 
-        printf "%-13s | %-15s | %-4s | %-11s | %-16s\n" $dev $IF_NAME $NUMA $STATE $DRIVER
+        # the file where we should find speed information
+        SPEED_FILE="/sys/class/$IF_TYPE/$IF_NAME/speed"
+
+        if [ -f $SPEED_FILE ]; then
+            RAW_SPEED=$(cat $SPEED_FILE 2> /dev/null)
+            
+            if [ ! $? -eq 0 ]; then
+                SPEED="-"
+            else
+                if [ $RAW_SPEED -lt 1000 ]; then
+                    SPEED="${RAW_SPEED}M"
+                else
+                    SPEED="$((RAW_SPEED / 1000))G"
+                fi
+            fi
+        else
+            SPEED="-"
+        fi
+
+        printf "%-13s | %-15s | %-4s | %-11s | %-5s | %-16s\n" $dev $IF_NAME $NUMA $STATE $SPEED $DRIVER
     fi
 done
 
