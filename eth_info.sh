@@ -29,16 +29,25 @@ path_basename ()
 
 get_intf_name_and_type_from_pci_id ()
 {
-    # fetch the interface name and type from the PCI device id
+    # fetch the interface name, type and other details for a device using the PCI device id
     # input:
     # - $1: the PCI device ID, e.g. 0000:42:00.1
     #
-    # output: type:if_name:driver:status
+    # output: type:if_name:driver:status:numa_node
     #   examples: 
-    #    - net:eth0:igb:down
-    #    - uio:uio0:igb_uio:up
+    #    - net:eth0:igb:down:0
+    #    - uio:uio0:igb_uio:up:1
 
     BASE_PATH="/sys/bus/pci/devices/$1/"
+    DRIVER=$(readlink $BASE_PATH/driver)
+    NUMA_FILE="${BASE_PATH}/numa_node"
+
+    # the numa_node file might not exist (e.g. for virtio interfaces)
+    if [ -f $NUMA_FILE ]; then
+        NUMA=$(cat $NUMA_FILE 2> /dev/null)
+    else
+        NUMA="-"
+    fi
 
     # look for 'net' (regular) device type
     if [ -d "$BASE_PATH/net/" ]; then
@@ -55,7 +64,7 @@ get_intf_name_and_type_from_pci_id ()
         if [ $? -eq 1 ]; then
 
             # something went wrong and we could not find a virtio
-            echo "-:-:-:-"
+            echo "-:-:$(path_basename $DRIVER):-:$NUMA"
             return 0
 
         else
@@ -67,14 +76,13 @@ get_intf_name_and_type_from_pci_id ()
         
             # look for dpdk interface (uio)
             elif [ -d "$BASE_PATH/uio/" ]; then
-                IF_TYPE="ui0"
+                IF_TYPE="uio"
 
             fi
         fi
     fi
 
     IF_NAME=$(ls $BASE_PATH/$IF_TYPE/)
-    DRIVER=$(readlink $BASE_PATH/driver)
 
     if [ -f "$BASE_PATH/$IF_TYPE/$IF_NAME/carrier" ]; then
 
@@ -95,7 +103,7 @@ get_intf_name_and_type_from_pci_id ()
         STATE="unspecified"
     fi
 
-    echo "$IF_TYPE:$IF_NAME:$(path_basename $DRIVER):$STATE"
+    echo "$IF_TYPE:$IF_NAME:$(path_basename $DRIVER):$STATE:$NUMA"
 
 }
 
@@ -117,15 +125,19 @@ for dev in $ETH_PCI_DEVS; do
         IF_NAME=${TYPE_AND_NAME[1]}
         DRIVER=${TYPE_AND_NAME[2]}
         STATE=${TYPE_AND_NAME[3]}
+        NUMA=${TYPE_AND_NAME[4]}
     
-        # the file where we should find the NUMA info
-        NUMA_FILE="/sys/class/$IF_TYPE/$IF_NAME/device/numa_node"
+        # if the NUMA info was not included in the output, try to find it using /sys/class
+        if [ $NUMA == "-" ]; then
+            # the file where we should find the NUMA info
+            NUMA_FILE="/sys/class/$IF_TYPE/$IF_NAME/device/numa_node"
     
-        # the numa_node file might not exist (e.g. for virtio interfaces)
-        if [ -f $NUMA_FILE ]; then
-            NUMA=$(cat $NUMA_FILE 2> /dev/null)
-        else
-            NUMA="-"
+            # the numa_node file might not exist (e.g. for virtio interfaces)
+            if [ -f $NUMA_FILE ]; then
+                NUMA=$(cat $NUMA_FILE 2> /dev/null)
+            else
+                NUMA="-"
+            fi
         fi
 
         # the file where we should find speed information
