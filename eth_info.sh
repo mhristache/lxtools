@@ -149,7 +149,9 @@ for dev in $ETH_PCI_DEVS; do
             if [ ! $? -eq 0 ]; then
                 SPEED="-"
             else
-                if [ $RAW_SPEED -lt 1000 ]; then
+                if [ $RAW_SPEED == -1 ]; then
+                    SPEED="-"
+                elif [ $RAW_SPEED -lt 1000 ]; then
                     SPEED="${RAW_SPEED}M"
                 else
                     SPEED="$((RAW_SPEED / 1000))G"
