@@ -3,8 +3,12 @@
 # Author: Maximilian Hristache
 # License: MIT 
 #
-#This script can be used to retrieve information about the network devices
-# which are installed in your system.
+# This script can be used to retrieve information about the physical
+# network devices which are installed in your system.
+#
+# Note: the script will not print info about virtual devices which are
+#       not attached to a PCI device (e.g. veth interfaces)
+#
 # Currently, for each network device it outputs:
 #   - the PCI ID
 #   - the interface name
@@ -15,6 +19,9 @@
 # Note: If NUMA support is not enabled, it will output either 
 #   '-1' (The system does not support NUMA)
 #   '-'  (There is no NUMA information provided for the device)
+#
+# When executed in a network namespace, it will print only the physical
+# network devices which are attached to that network namespace.
 
 
 path_basename ()
@@ -39,6 +46,21 @@ get_intf_name_and_type_from_pci_id ()
     #    - uio:uio0:igb_uio:up:1
 
     BASE_PATH="/sys/bus/pci/devices/$1/"
+
+    # the script might be running while inside a network name space only
+    # in this case it will not show the correct information
+    # as sysfs for the namespace migh not be mounted
+    # so we try to mount sysfs and use it if mounting worked
+    MNT=`mktemp -d`
+    mount -t sysfs none $MNT 2> /dev/null
+    if [ $? -eq 0 ]; then
+        if [ -d "$MNT/bus/pci/devices/$1/" ]; then
+            BASE_PATH="$MNT/bus/pci/devices/$1/"
+        fi
+        trap 'umount $MNT' EXIT
+    fi
+
+
     DRIVER=$(readlink $BASE_PATH/driver)
     NUMA_FILE="${BASE_PATH}/numa_node"
 
@@ -84,6 +106,12 @@ get_intf_name_and_type_from_pci_id ()
 
     IF_NAME=$(ls $BASE_PATH/$IF_TYPE/)
 
+    # the name of the interface is not present if the device does not belong to the current netns
+    # so return an arror so that the caller can ignore this interface
+    if [ -z $IF_NAME ]; then
+        return 1
+    fi
+
     if [ -f "$BASE_PATH/$IF_TYPE/$IF_NAME/carrier" ]; then
 
         # the carrier file is not readable if the interface is not enabled
@@ -100,12 +128,13 @@ get_intf_name_and_type_from_pci_id ()
         fi
 
     else
-        STATE="unspecified"
+        STATE="n/a"
     fi
 
     echo "$IF_TYPE:$IF_NAME:$(path_basename $DRIVER):$STATE:$NUMA"
 
 }
+
 
 
 # find the PCI devices for the network cards
@@ -116,6 +145,9 @@ echo '-----------------------------------------------------------------------'
 
 for dev in $ETH_PCI_DEVS; do
     TYPE_AND_NAME_RAW=$(get_intf_name_and_type_from_pci_id $dev)
+    if [ $? -ne 0 ]; then
+        continue
+    fi
 
     # continue if the the device type and name could be retrieved
     if [ $? -eq 0 ]; then
